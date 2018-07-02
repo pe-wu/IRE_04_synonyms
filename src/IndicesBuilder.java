@@ -1,3 +1,4 @@
+import com.google.common.collect.Multimap;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.*;
@@ -10,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collection;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -17,7 +19,7 @@ import java.util.stream.Stream;
 
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
-class FileProcessor {
+class IndicesBuilder {
 
     private static IndexWriter writer;
     private static String titleLine = null;
@@ -26,9 +28,14 @@ class FileProcessor {
     private static String pattern =
             "MV {2}(.+) \\(([ \\d]{4}[^)]*)\\) ?(?:\\{([^}]*)})?(\\(V\\))?(\\(VG\\))?(\\(TV\\))?";
     private static Pattern regEx = Pattern.compile(pattern);
+    private final Multimap<String, String> synsets;
+
+
+    IndicesBuilder(Multimap<String, String> synsets) {
+        this.synsets = synsets;
+    }
 
     void buildIndices(Path plotFile) {
-
         try {
             Analyzer analyzer = new StandardAnalyzer();
             Directory directory = FSDirectory.open(Paths.get(BooleanQueryWordnet.indexPath));
@@ -38,7 +45,7 @@ class FileProcessor {
 
             indexDocs(plotFile);
 
-            writer.forceMerge(1);
+//            writer.forceMerge(1);
             writer.commit();
             writer.close();
 
@@ -79,14 +86,38 @@ class FileProcessor {
             doc.add(new StringField("type", evaluateDocType(m), Field.Store.NO));
             doc.add(new StringField("year", m.group(2), Field.Store.NO));
 
-            doc.add(new TextField("title", withoutQuotationMarks(m.group(1)), Field.Store.NO));
-            doc.add(new TextField("plot", plotText.toString(), Field.Store.NO));
-            if (m.group(3) != null) {
-                doc.add(new TextField("episodetitle", m.group(3), Field.Store.NO));
+            String title = withoutQuotationMarks(m.group(1));
+            doc.add(new TextField("title", title, Field.Store.NO));
+            for (String token : tokens(title)) {
+                for (String s : synsets.get(token)) {
+                    doc.add(new TextField("title", s, Field.Store.NO));
+                }
+            }
+
+            String plot = plotText.toString();
+            doc.add(new TextField("plot", plot, Field.Store.NO));
+            for (String token : tokens(plot)) {
+                for (String s : synsets.get(token)) {
+                    doc.add(new TextField("plot", s, Field.Store.NO));
+                }
+            }
+
+                if (m.group(3) != null) {
+                String episodetitle = m.group(3);
+                doc.add(new TextField("episodetitle", episodetitle, Field.Store.NO));
+                for (String token : tokens(episodetitle)) {
+                    for (String s : synsets.get(token)) {
+                        doc.add(new TextField("episodetitle", s, Field.Store.NO));
+                    }
+                }
             }
 
             writer.addDocument(doc);
         }
+    }
+
+    private String[] tokens(String plot) {
+        return plot.split(" ");
     }
 
     private String evaluateDocType(Matcher m) {

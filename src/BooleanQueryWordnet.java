@@ -14,10 +14,10 @@ import static java.nio.charset.StandardCharsets.ISO_8859_1;
  * the AND keyword, on a corpus of movies.
  */
 public class BooleanQueryWordnet {
-    private QueryProcessor qp;
+    private static Multimap<String, String> synsets;
+    private static QueryProcessor qp;
     static String originalMVLine = "originalMVLine";
     static String indexPath = "./indices";
-    private Multimap<String, String> synsets;
 
 
     /**
@@ -43,7 +43,7 @@ public class BooleanQueryWordnet {
      */
     public void buildSynsets(Path wordnetDir) {
         SynsetsGenerator sg = new SynsetsGenerator(wordnetDir);
-        synsets = sg.getSynsets(wordnetDir);
+        synsets = sg.getSynsets();
     }
 
     /**
@@ -56,7 +56,7 @@ public class BooleanQueryWordnet {
      * @param plotFile the textual movie plot file 'plot.list' to use
      */
     public void buildIndices(Path plotFile) {
-        FileProcessor fp = new FileProcessor();
+        IndicesBuilder fp = new IndicesBuilder(synsets);
         fp.buildIndices(plotFile);
         qp = new QueryProcessor();
     }

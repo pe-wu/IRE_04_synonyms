@@ -1,100 +1,88 @@
-import com.google.common.collect.ArrayListMultimap;
-import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Multimaps;
+import com.google.common.collect.*;
 
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.function.Consumer;
+import java.util.Collection;
+import java.util.StringTokenizer;
 import java.util.stream.Stream;
 
-import static java.nio.charset.StandardCharsets.US_ASCII;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 class SynsetsGenerator {
 
-    private static ListMultimap<String, String> synsets;
-    private int RADIX_HEX = 16;
+    private static Multimap<String, String> synsets;
+    private final Path wordnetDir;
 
-    public SynsetsGenerator(Path wordnetDir) {
-        System.out.println("building synsets...");
-        String[] dataFiles = new String[]{"data.adj", "data.adv", "data.noun", "data.verb"};
-        String[] exceptionFiles = new String[]{"adj.exc", "adv.exc", "noun.exc", "verb.exc"};
+    SynsetsGenerator(Path wordnetDir) {
+        System.out.println("Building synsets...");
+        this.wordnetDir = wordnetDir;
 
-        synsets = Multimaps.synchronizedListMultimap(ArrayListMultimap.create());
+        Multimap<String, String> adjSynsets = generateSynsets("data.adj", "adj.exc");
+        Multimap<String, String> advSynsets = generateSynsets("data.adv", "adv.exc");
+        Multimap<String, String> nounSynsets = generateSynsets("data.noun", "noun.exc");
+        Multimap<String, String> verbSynsets = generateSynsets("data.verb", "verb.exc");
 
-
-        for (String dataFile : dataFiles) {
-            saveRegularSynsets(wordnetDir + "\\" + dataFile);
-        }
-
-        for (String exceptionFile : exceptionFiles) {
-            addExceptionSynsets(wordnetDir + "\\" + exceptionFile);
-        }
+        synsets = Multimaps.synchronizedSetMultimap(HashMultimap.create());
+        synsets.putAll(adjSynsets);
+        synsets.putAll(advSynsets);
+        synsets.putAll(nounSynsets);
+        synsets.putAll(verbSynsets);
     }
 
-    Multimap<String, String> getSynsets(Path wordnetDir) {
+    private Multimap<String, String> generateSynsets(String data, String exceptions) {
+        Path dataPath = Paths.get(wordnetDir + "\\" + data);
+        Path exceptionsPath = Paths.get(wordnetDir + "\\" + exceptions);
 
+        Multimap<String, String> map = getRegularSynsets(dataPath);
+        mergeExceptions(map, exceptionsPath);
 
-        return synsets;
+        return map;
     }
 
-    private void saveRegularSynsets(String dataFile) {
-        System.out.println("saving regular synsets... " + dataFile);
-        Path filepath = Paths.get(dataFile);
+    private Multimap<String, String> getRegularSynsets(Path dataPath) {
+        Multimap<String, String> map = Multimaps.synchronizedMultimap(HashMultimap.create());
 
-        try (Stream<String> lines = Files.lines(filepath, US_ASCII)) {
-            lines.forEach(processLine);
+        try (Stream<String> lines = Files.lines(dataPath, UTF_8)) {
+            lines.forEach((line) -> {
+                if (!line.startsWith(" ")) {
+                    addSynonyms(map, getSynonyms(line));
+                }
+            });
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        return map;
     }
 
-    private Consumer<String> processLine = (line) -> {
-        if (!line.startsWith(" ")) {
-            saveSynset(line);
-        }
-    };
-
-    private void saveSynset(String line) {
-        System.out.println("saving regular synsets... " + line);
-        System.out.println(line.substring(14, 16));
-
-        ArrayList<String> synonyms = getSynonymsInLine(line);
-        addSynonyms(synonyms);
-    }
-
-    private void addSynonyms(ArrayList<String> synonyms) {
+    private void addSynonyms(Multimap<String, String> map, ArrayList<String> synonyms) {
         for (String word : synonyms) {
             for (String synonym : synonyms) {
-                if (!word.equals(synonym)) {
-                    System.out.println("pair: " + word + "," + synonym);
-                    synsets.put(word, synonym);
-                }
+                map.put(word, synonym);
             }
         }
     }
 
-    private ArrayList<String> getSynonymsInLine(String line) {
+    private ArrayList<String> getSynonyms(String line) {
         ArrayList<String> synonyms = new ArrayList<>();
 
-        int synonymsCount = Integer.parseInt(line.substring(14, 16), RADIX_HEX);
         int wordStartIndex = 17;
         int wordEndIndex = 18;
         int wordsFound = 0;
+        int wordsCount = Integer.parseInt(line.substring(14, 16), 16);
 
-        while (wordsFound < synonymsCount) {
+        while (wordsFound < wordsCount) {
             if (line.charAt(wordEndIndex) != ' ') {
                 wordEndIndex++;
             } else {
                 String word = line.substring(wordStartIndex, wordEndIndex);
-                addWord(synonyms, word);
+                addWord(synonyms, word.toLowerCase());
                 wordStartIndex = wordEndIndex + 3;
                 wordEndIndex = wordStartIndex + 1;
                 wordsFound++;
-//                System.out.println("found word: " + word);
             }
         }
         return synonyms;
@@ -105,14 +93,61 @@ class SynsetsGenerator {
             if (!word.contains("(")) {
                 synonyms.add(word);
             } else {
-                int toCutIndex = word.indexOf("(");
+                int toCutIndex = word.lastIndexOf("(");
                 synonyms.add(word.substring(0, toCutIndex));
             }
         }
     }
 
-    private void addExceptionSynsets(String exceptionFile) {
-        System.out.println("adding exception synsets... " + exceptionFile);
+    private void mergeExceptions(Multimap<String, String> map, Path exceptionsPath) {
+        try (Stream<String> lines = Files.lines(exceptionsPath, UTF_8)) {
+            lines.forEach((line) -> {
 
+                StringTokenizer st = new StringTokenizer(line);
+                String inflected = st.nextToken();
+
+                while (st.hasMoreTokens()) {
+                    String otherWord = st.nextToken();
+                    Collection<String> otherWordSynset = map.get(otherWord);
+                    map.putAll(inflected, otherWordSynset);
+                }
+
+
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    Multimap<String, String> getSynsets() {
+        System.out.println(synsets.size());
+
+        for (String key : synsets.keySet()) {
+            for (String val : synsets.get(key)) {
+                System.out.print(val + "\t");
+            }
+            System.out.println();
+        }
+
+        int keys = 0;
+        int vals = 0;
+        int goodSyns = 0;
+        for (String key : synsets.keySet()) {
+            keys++;
+            if (synsets.get(key).size()>1) goodSyns++;
+            for (String val : synsets.get(key)) {
+                vals++;
+            }
+        }
+        System.out.println("keys: " + keys);
+        System.out.println("vals: " + (vals - keys));
+        System.out.println("goodSyns: " + goodSyns);
+
+        return synsets;
+    }
+
+    private String normalize(String text) {
+        return text.replaceAll("[.,:!?]", " ");
     }
 }
